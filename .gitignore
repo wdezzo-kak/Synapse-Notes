@@ -4,11 +4,11 @@ node_modules/
 .pnp
 .pnp.js
 
+# GitHub Actions (As requested)
+.github/
+
 # Testing
 coverage/
-
-# workflows
-.github/
 
 # Production Build
 dist/

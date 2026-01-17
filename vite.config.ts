@@ -15,12 +15,16 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         background: resolve(__dirname, 'background.js'),
-        content: resolve(__dirname, 'contentScript.js'),
+        contentScript: resolve(__dirname, 'contentScript.js'),
       },
       output: {
         // Ensure scripts are named exactly as manifest.json expects
         entryFileNames: (chunkInfo) => {
-          return chunkInfo.name === 'main' ? 'assets/[name]-[hash].js' : '[name].js';
+          // Keep background and contentScript names fixed for manifest compliance
+          if (chunkInfo.name === 'background' || chunkInfo.name === 'contentScript') {
+            return '[name].js';
+          }
+          return 'assets/[name]-[hash].js';
         },
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash].[ext]',
