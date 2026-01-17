@@ -1,0 +1,46 @@
+
+name: Build and Deploy to Branch
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Allows manual triggering
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare Extension Files
+        run: |
+          # Create a clean distribution directory
+          mkdir dist
+          
+          # Copy essential extension files
+          cp manifest.json dist/
+          cp index.html dist/
+          cp index.tsx dist/
+          cp App.tsx dist/
+          cp types.ts dist/
+          cp constants.tsx dist/
+          cp background.js dist/
+          cp contentScript.js dist/
+          
+          # Copy icon if present
+          if [ -f icon.png ]; then cp icon.png dist/; fi
+          
+          # Optional: Also include the README in the build branch for clarity
+          cp README.md dist/
+
+      - name: Deploy to Build Branch
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: dist
+          branch: build # The branch the action should deploy to.
+          clean: true # Automatically remove deleted files from the branch
