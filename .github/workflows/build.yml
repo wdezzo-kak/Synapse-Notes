@@ -22,10 +22,10 @@ jobs:
           node-version: 20
     
      - name: Ensure npm cache directory is fully cleaned
-  run: |
-    npm cache clean --force || true
-    rm -rf ~/.npm/_cacache || true
-    sleep 5
+        run: |
+          npm cache clean --force || true
+          rm -rf ~/.npm/_cacache || true
+          sleep 5
 
 
       - name: Install dependencies
