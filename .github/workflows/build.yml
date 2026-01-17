@@ -20,7 +20,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-            - name: Configure npm to use runner-temp cache
+      - name: Configure npm to use runner-temp cache
         run: |
           # Use a per-runner temporary cache so cleans are reliable
           npm config set cache "$RUNNER_TEMP/npm-cache" --global
