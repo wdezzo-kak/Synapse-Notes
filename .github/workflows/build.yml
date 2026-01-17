@@ -20,8 +20,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-    
-     - name: Ensure npm cache directory is fully cleaned
+      - name: Ensure npm cache directory is fully cleaned
         run: |
           npm cache clean --force || true
           rm -rf ~/.npm/_cacache || true
