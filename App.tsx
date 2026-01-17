@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Note, ExtensionSettings, NotionConfig } from './types';
 import { Icons, DEFAULT_NOTE_COLOR, PRESET_COLORS } from './constants';
 import { GoogleGenAI } from "@google/genai";
@@ -18,6 +18,8 @@ const App: React.FC = () => {
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [isKeySelected, setIsKeySelected] = useState<boolean | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const isInitialLoad = useRef(true);
   
   // UI states
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
@@ -27,7 +29,9 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLoadingGlobal, setIsLoadingGlobal] = useState(false);
   const [syncingNoteId, setSyncingNoteId] = useState<string | null>(null);
+  const [noteIdToDelete, setNoteIdToDelete] = useState<string | null>(null);
 
+  // Initialize: Load notes and settings from Chrome Storage
   useEffect(() => {
     const init = async () => {
       try {
@@ -41,19 +45,41 @@ const App: React.FC = () => {
       if (typeof chrome !== 'undefined' && chrome.storage) {
         chrome.storage.local.get(['notes', 'settings'], (result: any) => {
           if (result.notes) setNotes(result.notes);
-          if (result.settings) setSettings(prev => ({ ...prev, ...result.settings }));
+          if (result.settings) {
+            setSettings(prev => ({ ...prev, ...result.settings }));
+          }
+          // Mark as loaded ONLY after we've applied stored settings
+          setIsLoaded(true);
+          isInitialLoad.current = false;
         });
+
+        // Listen for changes from other contexts (like the content script)
+        const listener = (changes: any) => {
+          if (changes.notes) setNotes(changes.notes.newValue);
+          // If settings changed elsewhere, sync them locally without triggering a save loop
+          if (changes.settings && isInitialLoad.current === false) {
+            setSettings(prev => ({ ...prev, ...changes.settings.newValue }));
+          }
+        };
+        chrome.storage.onChanged.addListener(listener);
+        return () => chrome.storage.onChanged.removeListener(listener);
+      } else {
+        // Fallback for non-extension environment
+        setIsLoaded(true);
       }
     };
     init();
   }, []);
 
+  // Persist settings and notes whenever they change, but only after initial load
   useEffect(() => {
+    if (!isLoaded) return;
+
     const chrome = (window as any).chrome;
     if (typeof chrome !== 'undefined' && chrome.storage) {
       chrome.storage.local.set({ notes, settings });
     }
-  }, [notes, settings]);
+  }, [notes, settings, isLoaded]);
 
   const handleConnectKey = async () => {
     try {
@@ -86,6 +112,13 @@ const App: React.FC = () => {
         timestamp: Date.now()
       } : n));
       setEditingNoteId(null);
+    }
+  };
+
+  const handleDeleteNote = () => {
+    if (noteIdToDelete) {
+      setNotes(prev => prev.filter(n => n.id !== noteIdToDelete));
+      setNoteIdToDelete(null);
     }
   };
 
@@ -164,7 +197,22 @@ const App: React.FC = () => {
     );
   }, [notes, searchQuery]);
 
+  const toggleHoverTrigger = () => {
+    setSettings(prev => ({
+      ...prev,
+      isHoverTriggerActive: !prev.isHoverTriggerActive
+    }));
+  };
+
   const notionReady = settings.notionConfig?.workerUrl && settings.notionConfig?.notionToken;
+
+  if (!isLoaded) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-slate-900">
+        <div className="w-8 h-8 border-4 border-orange-500/30 border-t-orange-500 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-slate-900 text-gray-100 font-sans">
@@ -209,6 +257,17 @@ const App: React.FC = () => {
       </div>
 
       <main className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-900">
+        {filteredNotes.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-gray-500 space-y-4 text-center p-8">
+            <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center">
+              <Icons.Clipboard />
+            </div>
+            <div>
+              <p className="font-semibold text-gray-400">No synapses found</p>
+              <p className="text-xs">Capture your first thought to begin.</p>
+            </div>
+          </div>
+        )}
         {filteredNotes.map((note) => (
           <div key={note.id} className="group relative border border-slate-700 rounded-2xl bg-slate-800 overflow-hidden" style={{ borderLeft: `6px solid ${note.color}` }}>
             {editingNoteId === note.id ? (
@@ -229,10 +288,10 @@ const App: React.FC = () => {
                       className="p-2 rounded-lg text-gray-500 hover:text-blue-400 hover:bg-slate-700 transition-colors" title="Sync to Notion">
                       {syncingNoteId === note.id ? <div className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin"></div> : <Icons.Notion />}
                     </button>
-                    <button onClick={() => setNotes(prev => prev.filter(n => n.id !== note.id))} className="p-2 rounded-lg text-gray-500 hover:text-red-400 hover:bg-slate-700"><Icons.Trash /></button>
+                    <button onClick={() => setNoteIdToDelete(note.id)} className="p-2 rounded-lg text-gray-500 hover:text-red-400 hover:bg-slate-700"><Icons.Trash /></button>
                   </div>
                 </div>
-                <p className="text-sm text-gray-300 line-clamp-3 whitespace-pre-wrap">{note.content}</p>
+                <p className="text-sm text-gray-300 line-clamp-3 whitespace-pre-wrap leading-relaxed">{note.content}</p>
                 {note.url && <div className="mt-3 text-[10px] text-gray-500 flex items-center gap-1"><Icons.External /> {new URL(note.url).hostname}</div>}
               </div>
             )}
@@ -240,59 +299,115 @@ const App: React.FC = () => {
         ))}
       </main>
 
+      {/* Delete Confirmation Modal */}
+      {noteIdToDelete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-xs rounded-2xl p-6 bg-slate-800 border border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-200">
+            <h3 className="text-lg font-bold text-white mb-2">Delete Note?</h3>
+            <p className="text-sm text-gray-400 mb-6 leading-relaxed">
+              This action cannot be undone. Are you sure you want to remove this synapse?
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setNoteIdToDelete(null)} 
+                className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleDeleteNote} 
+                className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 rounded-xl text-sm font-semibold text-white transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Settings Modal */}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-3xl p-6 bg-slate-800 border border-slate-700 shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold flex items-center gap-2"><Icons.Settings /> Integration Setup</h2>
-              <button onClick={() => setIsSettingsOpen(false)} className="text-gray-500 hover:text-white">&times;</button>
+          <div className="w-full max-w-md rounded-3xl p-6 bg-slate-800 border border-slate-700 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex justify-between items-center mb-6 sticky top-0 bg-slate-800 z-10 py-1">
+              <h2 className="text-xl font-bold flex items-center gap-2"><Icons.Settings /> Configuration</h2>
+              <button onClick={() => setIsSettingsOpen(false)} className="p-2 text-gray-500 hover:text-white transition-colors">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
             </div>
             
-            <div className="space-y-4">
-              <div className="p-4 bg-orange-500/10 border border-orange-500/20 rounded-2xl mb-4">
-                <p className="text-xs text-orange-200 leading-relaxed font-medium">
-                  To sync with Notion securely, you need a <strong>Cloudflare Worker</strong> proxy. 
-                  This prevents leaking your API keys and bypasses browser security restrictions.
-                </p>
-              </div>
+            <div className="space-y-8">
+              {/* General Section */}
+              <section className="space-y-4">
+                <h3 className="text-[10px] font-bold text-orange-500 uppercase tracking-widest border-b border-slate-700 pb-2">Browser Features</h3>
+                <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-2xl border border-slate-700">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-semibold text-white">Floating Hover Trigger</p>
+                    <p className="text-[11px] text-gray-500">Show a quick-capture icon on every webpage.</p>
+                  </div>
+                  <button 
+                    onClick={toggleHoverTrigger}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all focus:outline-none ${settings.isHoverTriggerActive ? 'bg-orange-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.isHoverTriggerActive ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Cloudflare Worker URL</label>
-                <input 
-                  type="text" placeholder="https://your-worker.workers.dev"
-                  className="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:ring-2 focus:ring-orange-500"
-                  value={settings.notionConfig?.workerUrl || ''}
-                  onChange={(e) => setSettings({...settings, notionConfig: {...(settings.notionConfig || {} as NotionConfig), workerUrl: e.target.value}})}
-                />
-              </div>
+                <div className="flex items-center gap-2 px-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold tracking-tighter">Database:</span>
+                  <span className="text-[10px] text-gray-400 bg-slate-700 px-2 py-0.5 rounded">chrome.storage.local</span>
+                </div>
+              </section>
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Notion Integration Token</label>
-                <input 
-                  type="password" placeholder="secret_..."
-                  className="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:ring-2 focus:ring-orange-500"
-                  value={settings.notionConfig?.notionToken || ''}
-                  onChange={(e) => setSettings({...settings, notionConfig: {...(settings.notionConfig || {} as NotionConfig), notionToken: e.target.value}})}
-                />
-              </div>
+              {/* Notion Integration Section */}
+              <section className="space-y-4">
+                <h3 className="text-[10px] font-bold text-orange-500 uppercase tracking-widest border-b border-slate-700 pb-2">Notion Integration</h3>
+                <div className="p-4 bg-orange-500/10 border border-orange-500/20 rounded-2xl">
+                  <p className="text-[11px] text-orange-200 leading-relaxed">
+                    Integration requires a <strong>Cloudflare Worker</strong> proxy to keep your Notion Token secret. 
+                    See the <span onClick={() => {setIsSettingsOpen(false); setIsGuideOpen(true);}} className="underline cursor-pointer font-bold">Setup Guide</span> for details.
+                  </p>
+                </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Database ID</label>
-                <input 
-                  type="text" placeholder="Paste your database ID"
-                  className="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:ring-2 focus:ring-orange-500"
-                  value={settings.notionConfig?.databaseId || ''}
-                  onChange={(e) => setSettings({...settings, notionConfig: {...(settings.notionConfig || {} as NotionConfig), databaseId: e.target.value}})}
-                />
-              </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Cloudflare Worker URL</label>
+                    <input 
+                      type="text" placeholder="https://your-worker.workers.dev"
+                      className="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:ring-2 focus:ring-orange-500 placeholder:text-gray-600"
+                      value={settings.notionConfig?.workerUrl || ''}
+                      onChange={(e) => setSettings({...settings, notionConfig: {...(settings.notionConfig || {} as NotionConfig), workerUrl: e.target.value}})}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Notion Secret Token</label>
+                    <input 
+                      type="password" placeholder="secret_..."
+                      className="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:ring-2 focus:ring-orange-500 placeholder:text-gray-600"
+                      value={settings.notionConfig?.notionToken || ''}
+                      onChange={(e) => setSettings({...settings, notionConfig: {...(settings.notionConfig || {} as NotionConfig), notionToken: e.target.value}})}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Database ID</label>
+                    <input 
+                      type="text" placeholder="Paste your database ID"
+                      className="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:ring-2 focus:ring-orange-500 placeholder:text-gray-600"
+                      value={settings.notionConfig?.databaseId || ''}
+                      onChange={(e) => setSettings({...settings, notionConfig: {...(settings.notionConfig || {} as NotionConfig), databaseId: e.target.value}})}
+                    />
+                  </div>
+                </div>
+              </section>
             </div>
 
             <button 
               onClick={() => setIsSettingsOpen(false)}
               className="w-full mt-8 py-4 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-2xl transition-all shadow-lg active:scale-95"
             >
-              Save Configuration
+              Done
             </button>
           </div>
         </div>
@@ -304,27 +419,36 @@ const App: React.FC = () => {
           <div className="w-full max-w-md rounded-3xl p-8 bg-slate-800 border border-slate-700 shadow-2xl overflow-y-auto max-h-[85vh]">
             <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><Icons.Info /> Setup Guide</h2>
             
-            <div className="space-y-6 text-sm text-gray-300">
+            <div className="space-y-6 text-sm text-gray-300 leading-relaxed">
               <p>For a complete, secure setup, follow our <strong>Zero-Exposure</strong> guide on GitHub:</p>
               
               <div className="p-4 bg-slate-900 rounded-2xl border border-slate-700 space-y-4">
-                <div>
-                  <h4 className="font-bold text-orange-400 mb-1">1. Notion Integration</h4>
-                  <p className="text-xs text-gray-400">Create an internal integration in Notion to get your token.</p>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center text-[10px] font-bold">1</div>
+                  <div>
+                    <h4 className="font-bold text-white mb-1">Notion Integration</h4>
+                    <p className="text-xs text-gray-400">Create an internal integration in Notion to get your secret token.</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-bold text-blue-400 mb-1">2. Cloudflare Worker</h4>
-                  <p className="text-xs text-gray-400">Deploy a small proxy script to keep your tokens secret.</p>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center text-[10px] font-bold">2</div>
+                  <div>
+                    <h4 className="font-bold text-white mb-1">Cloudflare Worker</h4>
+                    <p className="text-xs text-gray-400">Deploy the bridge script (check README) to handle secure handshakes.</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-bold text-purple-400 mb-1">3. Sync!</h4>
-                  <p className="text-xs text-gray-400">Paste your credentials into Settings and start syncing notes.</p>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-purple-500 flex items-center justify-center text-[10px] font-bold">3</div>
+                  <div>
+                    <h4 className="font-bold text-white mb-1">Database Mapping</h4>
+                    <p className="text-xs text-gray-400">Ensure your table has "Title", "URL", and "Date" columns exactly.</p>
+                  </div>
                 </div>
               </div>
 
               <div className="p-4 bg-purple-500/10 border border-purple-500/20 rounded-2xl">
                 <p className="text-xs text-purple-200">
-                  Refer to <code>GUIDE.md</code> in the project root for the Cloudflare script and detailed Notion database column mapping.
+                  Refer to the <code>GUIDE.md</code> file in your extension folder for the complete deployment script.
                 </p>
               </div>
             </div>
@@ -344,14 +468,14 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-3xl p-6 bg-slate-800 border border-slate-700 shadow-2xl">
             <h2 className="text-xl font-bold mb-4">Capture Note</h2>
-            <input className="w-full mb-3 p-3 bg-slate-900 border border-slate-700 rounded-xl text-white outline-none" placeholder="Title" value={editingData.title} onChange={(e) => setEditingData({...editingData, title: e.target.value})} />
-            <textarea rows={6} className="w-full mb-6 p-3 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm" placeholder="Write thoughts..." value={editingData.content} onChange={(e) => setEditingData({...editingData, content: e.target.value})} />
+            <input className="w-full mb-3 p-3 bg-slate-900 border border-slate-700 rounded-xl text-white outline-none focus:ring-2 focus:ring-orange-500" placeholder="Title" value={editingData.title} onChange={(e) => setEditingData({...editingData, title: e.target.value})} />
+            <textarea rows={6} className="w-full mb-6 p-3 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm outline-none focus:ring-2 focus:ring-orange-500" placeholder="Write thoughts..." value={editingData.content} onChange={(e) => setEditingData({...editingData, content: e.target.value})} />
             <div className="flex gap-3">
-              <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-slate-700 rounded-xl font-bold">Cancel</button>
+              <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold transition-colors">Cancel</button>
               <button onClick={() => {
                 setNotes(prev => [{ id: Date.now().toString(), title: editingData.title || 'Note', content: editingData.content, url: window.location.href, timestamp: Date.now(), color: DEFAULT_NOTE_COLOR }, ...prev]);
                 setIsModalOpen(false);
-              }} className="flex-1 py-3 bg-orange-500 rounded-xl font-bold">Save</button>
+              }} className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 rounded-xl font-bold transition-colors">Save</button>
             </div>
           </div>
         </div>
