@@ -20,15 +20,37 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Ensure npm cache directory is fully cleaned
+            - name: Configure npm to use runner-temp cache
         run: |
+          # Use a per-runner temporary cache so cleans are reliable
+          npm config set cache "$RUNNER_TEMP/npm-cache" --global
           npm cache clean --force || true
-          rm -rf ~/.npm/_cacache || true
-          sleep 5
+          rm -rf "$RUNNER_TEMP/npm-cache" || true
+          # Optional quick verify (won't fail the job)
+          npm cache verify || true
 
-
-      - name: Install dependencies
-        run: npm install
+      - name: Install dependencies (npm ci) with retries
+        run: |
+          set -euo pipefail
+          retries=3
+          count=0
+          until [ $count -ge $retries ]; do
+            if npm ci --prefer-offline --no-audit --no-fund; then
+              echo "npm ci succeeded"
+              break
+            fi
+            count=$((count+1))
+            echo "npm ci failed — retrying ($count/$retries)..."
+            sleep 5
+          done
+          if [ $count -ge $retries ]; then
+            echo "npm ci failed after $retries attempts; saving debug logs"
+            # Save npm debug log for investigation
+            mkdir -p $GITHUB_WORKSPACE/npm-debug-logs || true
+            cp -v /home/runner/.npm/_logs/*.log $GITHUB_WORKSPACE/npm-debug-logs/ || true
+            ls -la "$RUNNER_TEMP/npm-cache" || true
+            exit 1
+          fi
 
       - name: Build extension
         run: npm run build
