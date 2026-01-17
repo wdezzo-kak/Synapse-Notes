@@ -1,10 +1,10 @@
 
-name: Build and Deploy to Branch
+name: Build and Deploy Extension
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,30 +17,43 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Prepare Extension Files
-        run: |
-          # Create a clean distribution directory
-          mkdir dist
-          
-          # Copy essential extension files
-          cp manifest.json dist/
-          cp index.html dist/
-          cp index.tsx dist/
-          cp App.tsx dist/
-          cp types.ts dist/
-          cp constants.tsx dist/
-          cp background.js dist/
-          cp contentScript.js dist/
-          
-          # Copy icon if present
-          if [ -f icon.png ]; then cp icon.png dist/; fi
-          
-          # Optional: Also include the README in the build branch for clarity
-          cp README.md dist/
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
 
-      - name: Deploy to Build Branch
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Prepare dist folder
+        run: |
+          # Copy static files that Vite might not catch
+          cp manifest.json dist/
+          if [ -f icon.png ]; then cp icon.png dist/; fi
+          # Ensure README and GUIDE are in the build branch too
+          cp README.md dist/
+          cp GUIDE.md dist/
+
+      - name: Create Zip Artifact
+        run: |
+          cd dist
+          zip -r ../synapse-notes-production.zip .
+          cd ..
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: synapse-notes-v${{ github.run_number }}
+          path: synapse-notes-production.zip
+
+      - name: Deploy to Extension-Dist Branch
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           folder: dist
-          branch: build # The branch the action should deploy to.
-          clean: true # Automatically remove deleted files from the branch
+          branch: extension-dist
+          clean: true
+          commit-message: "deploy: build v${{ github.run_number }} [skip ci]"
