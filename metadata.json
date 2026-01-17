@@ -1,0 +1,5 @@
+{
+  "name": "Synapse Notes",
+  "description": "A high-performance note-taking extension with side panel integration and a floating hover trigger for context-aware notes.",
+  "requestFramePermissions": []
+}
