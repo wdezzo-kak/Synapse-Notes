@@ -165,14 +165,18 @@ const App: React.FC = () => {
 
     setIsLoadingGlobal(true);
     try {
+      // Fix: Create new GoogleGenAI instance right before making an API call
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const context = notes.slice(0, 5).map(n => n.content).join('\n---\n');
+      
+      // Fix: Use 'gemini-3-flash-preview' for basic text tasks like summarization
+      // Fix: Avoid setting maxOutputTokens without a corresponding thinkingBudget to prevent empty outputs
       const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
+        model: 'gemini-3-flash-preview',
         contents: `Briefly summarize recent focus: ${context}`,
-        config: { maxOutputTokens: 200 }
       });
 
+      // Fix: Access response.text directly (it is a getter, not a method)
       const summary = response.text || "Couldn't generate summary.";
       const newNote: Note = {
         id: Date.now().toString(),
@@ -183,7 +187,13 @@ const App: React.FC = () => {
         color: '#a855f7'
       };
       setNotes(prev => [newNote, ...prev]);
-    } catch (err) {
+    } catch (err: any) {
+      // Fix: Implement error handling for "Requested entity was not found." to prompt for key selection
+      if (err.message?.includes("Requested entity was not found.")) {
+        setIsKeySelected(false);
+        await (window as any).aistudio.openSelectKey();
+        setIsKeySelected(true);
+      }
       alert("Summarization failed.");
     } finally {
       setIsLoadingGlobal(false);
